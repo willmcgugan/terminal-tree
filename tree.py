@@ -6,24 +6,40 @@ import grp
 from stat import filemode
 
 from rich import filesize
+from rich.highlighter import Highlighter
 
+from rich.text import Text
 from textual import on, events
 from textual.reactive import reactive
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.message import Message
 from textual.containers import Horizontal, Vertical
-from textual.widgets import DirectoryTree, Footer, Label, Tree
+from textual.screen import ModalScreen
+from textual.validation import ValidationResult, Validator
+from textual.widgets import DirectoryTree, Footer, Label, Tree, Input
 from textual.widgets.directory_tree import DirEntry
 
 
-def datetime_to_ls_format(dt):
-    # Check if the datetime is from the current year
-    if dt.year == datetime.now().year:
-        # If it's the current year, use a format without the year
-        return dt.strftime("%d %b %H:%M")
-    else:
-        # If it's not the current year, include the year instead of time
-        return dt.strftime("%d %b  %Y")
+class DirectoryHighlighter(Highlighter):
+    """Highlights directories in green, anything else in red."""
+
+    def highlight(self, text: Text) -> Text:
+        path = Path(text.plain).expanduser().resolve()
+        if path.is_dir():
+            text.stylize("green")
+        else:
+            text.stylize("red")
+        return text
+
+
+class DirectoryValidator(Validator):
+    def validate(self, value: str) -> ValidationResult:
+        path = Path(value).expanduser().resolve()
+        if path.is_dir():
+            return self.success()
+        else:
+            return self.failure("Directory required", value)
 
 
 class PathComponent(Label):
@@ -36,7 +52,6 @@ class PathComponent(Label):
     """
 
     def on_click(self, event: events.Click) -> None:
-        event.stop()
         self.post_message(PathNavigator.NewPath(Path(self.name or "")))
 
 
@@ -45,23 +60,14 @@ class InfoBar(Horizontal):
     InfoBar {
         height: 1;
         dock: bottom;
-        .mode {
-            color: ansi_red;
-        }
-        .user-name {
-            color: ansi_green;
-        }
-        .group-name {
-            color: ansi_yellow;
-        }
+        .mode { color: ansi_red; }
+        .user-name { color: ansi_green; }
+        .group-name { color: ansi_yellow; }
         .file-size {
             color: ansi_magenta;
-            text-style:
+            text-style: bold;
         }
-        .modified-time {
-            color: ansi_cyan;
-        }
-
+        .modified-time { color: ansi_cyan; }
         Label {
             margin: 0 1 0 0;
         }
@@ -70,19 +76,26 @@ class InfoBar(Horizontal):
 
     path: reactive[Path] = reactive(Path, recompose=True)
 
+    @staticmethod
+    def datetime_to_ls_format(date_time: datetime) -> str:
+        """Convert a datetime object to a string format similar to ls -la output."""
+        if date_time.year == datetime.now().year:
+            # For dates in the current year, use format: "day month HH:MM"
+            return date_time.strftime("%d %b %H:%M")
+        else:
+            # For dates not in the current year, use format: "day month  year"
+            return date_time.strftime("%d %b %Y")
+
     def compose(self) -> ComposeResult:
         stat = self.path.stat()
-        yield Label(filemode(stat.st_mode), classes="mode")
-
         user_name = pwd.getpwuid(stat.st_uid).pw_name
-        yield Label(user_name, classes="user-name")
-
         group_name = grp.getgrgid(stat.st_gid).gr_name
-        yield Label(group_name, classes="group-name")
-
         modified_time = datetime.fromtimestamp(stat.st_mtime)
-        yield Label(datetime_to_ls_format(modified_time), classes="modified-time")
 
+        yield Label(filemode(stat.st_mode), classes="mode")
+        yield Label(user_name, classes="user-name")
+        yield Label(group_name, classes="group-name")
+        yield Label(self.datetime_to_ls_format(modified_time), classes="modified-time")
         if not self.path.is_dir():
             label = Label(filesize.decimal(stat.st_size), classes="file-size")
             label.tooltip = f"{stat.st_size} bytes"
@@ -96,23 +109,25 @@ class PathDisplay(Horizontal):
         height: 1;
         dock: top;
         align: center top;
-        text-style:  bold ;
+        text-style: bold;
         color: ansi_green;
 
         .separator {
-            margin: 0 0;
-            
+            margin: 0 0;   
         }
-    }
 
+        
+
+    }
     """
 
     path: reactive[Path] = reactive(Path, recompose=True)
+    edit = reactive(False, recompose=True)
 
     def compose(self) -> ComposeResult:
         path = self.path.resolve().absolute()
-        yield Label("📁 ", classes="separator")
 
+        yield Label("📁 ", classes="separator")
         components = str(path).split("/")
         for index, component in enumerate(components, 1):
             partial_path = "/".join(components[:index])
@@ -121,6 +136,33 @@ class PathDisplay(Horizontal):
             yield component_label
             if index < len(components):
                 yield Label("/", classes="separator")
+
+
+class PathScreen(ModalScreen):
+    BINDINGS = [("escape", "dismiss", "Cancel go to directory")]
+
+    DEFAULT_CSS = """
+    PathScreen {
+        align: center middle;
+        Input {
+            width: 80%;
+           
+        }
+
+    }
+    """
+
+    path: reactive[str] = reactive("", recompose=True)
+
+    def compose(self) -> ComposeResult:
+        yield Input(
+            value=self.path,
+            validators=[DirectoryValidator()],
+            classes="-ansi-colors",
+        )
+
+    def action_dismiss(self):
+        self.dismiss()
 
 
 class PathNavigator(Vertical):
@@ -135,6 +177,11 @@ class PathNavigator(Vertical):
     }
 
     """
+
+    BINDINGS = [
+        Binding("r", "reload", "Reload"),
+        Binding("g", "goto", "Go to directory"),
+    ]
 
     path: reactive[Path] = reactive(Path)
 
@@ -165,12 +212,27 @@ class PathNavigator(Vertical):
 
     def compose(self) -> ComposeResult:
         yield PathDisplay()
+
         tree = DirectoryTree(self.path, classes="-ansi -ansi-scrollbar")
         tree.guide_depth = 3
         tree.show_root = False
         tree.center_scroll = True
         yield tree
         yield InfoBar()
+
+    async def action_reload(self) -> None:
+        tree = self.query_one(DirectoryTree)
+        if tree.cursor_node is None:
+            await tree.reload()
+            self.notify("👍 Reloaded directory contents", title="Directory")
+        else:
+            reload_node = tree.cursor_node.parent
+            path = reload_node.data.path
+            await tree.reload_node(reload_node)
+            self.notify(f"👍 Reloaded {str(path)!r}", title="Reload")
+
+    def action_goto(self) -> None:
+        self.app.push_screen(PathScreen())
 
 
 class ANSIApp(App):
@@ -186,8 +248,9 @@ class ANSIApp(App):
 
     def compose(self) -> ComposeResult:
         yield PathNavigator(Path("~/projects/textual"))
-
-        yield Footer(classes="-ansi-colors")
+        footer = Footer(classes="-ansi-colors")
+        footer.compact = True
+        yield footer
 
     def on_mount(self) -> None:
         tree = self.query_one(DirectoryTree)
