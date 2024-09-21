@@ -1,9 +1,12 @@
+import asyncio
+import itertools
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 import pwd
 import grp
 from stat import filemode
+from typing import Coroutine
 
 from rich import filesize
 from rich.highlighter import Highlighter
@@ -16,6 +19,7 @@ from textual.binding import Binding
 from textual.message import Message
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
+from textual.suggester import Suggester
 from textual.validation import ValidationResult, Validator
 from textual.widgets import DirectoryTree, Footer, Label, Tree, Input
 from textual.widgets.directory_tree import DirEntry
@@ -24,13 +28,12 @@ from textual.widgets.directory_tree import DirEntry
 class DirectoryHighlighter(Highlighter):
     """Highlights directories in green, anything else in red."""
 
-    def highlight(self, text: Text) -> Text:
+    def highlight(self, text: Text) -> None:
         path = Path(text.plain).expanduser().resolve()
         if path.is_dir():
             text.stylize("green")
         else:
             text.stylize("red")
-        return text
 
 
 class DirectoryValidator(Validator):
@@ -40,6 +43,48 @@ class DirectoryValidator(Validator):
             return self.success()
         else:
             return self.failure("Directory required", value)
+
+
+class DirectorySuggester(Suggester):
+    """Suggest a directory."""
+
+    async def get_suggestion(self, value: str) -> str | None:
+        """Suggest the first matching directory."""
+
+        def suggestion_thread(value: str) -> str | None:
+            """Function to get suggestion in a thread.
+
+            Args:
+                value: Value to complete.
+
+            """
+            try:
+                path = Path(value)
+                if path.is_dir():
+                    return None
+                name = path.name
+
+                possible_paths = [
+                    str(sibling_path)
+                    for sibling_path in itertools.islice(
+                        path.parent.expanduser().iterdir(), 100
+                    )
+                    if sibling_path.name.lower().startswith(name.lower())
+                    and sibling_path.is_dir()
+                ]
+                if possible_paths:
+                    possible_paths.sort(key=str.__len__)
+                    suggestion = possible_paths[0]
+                    if "~" in value:
+                        home = str(Path("~").expanduser())
+                        suggestion = suggestion.replace(home, "~", 1)
+                    return suggestion
+
+            except FileNotFoundError:
+                pass
+            return None
+
+        return await asyncio.to_thread(suggestion_thread, value)
 
 
 class PathComponent(Label):
@@ -158,6 +203,7 @@ class PathScreen(ModalScreen):
         yield Input(
             value=self.path,
             validators=[DirectoryValidator()],
+            suggester=DirectorySuggester(),
             classes="-ansi-colors",
         )
 
