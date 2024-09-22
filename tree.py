@@ -6,13 +6,12 @@ from pathlib import Path
 import pwd
 import grp
 from stat import filemode
-from typing import Coroutine
 
 from rich import filesize
 from rich.highlighter import Highlighter
 
 from rich.text import Text
-from textual import on, events
+from textual import on, events, work
 from textual.reactive import reactive
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -183,32 +182,64 @@ class PathDisplay(Horizontal):
                 yield Label("/", classes="separator")
 
 
-class PathScreen(ModalScreen):
-    BINDINGS = [("escape", "dismiss", "Cancel go to directory")]
+class PathScreen(ModalScreen[str | None]):
+    BINDINGS = [("escape", "dismiss", "cancel")]
 
     DEFAULT_CSS = """
     PathScreen {
-        align: center middle;
-        Input {
-            width: 80%;
-           
+        align: center top;        
+        Horizontal {
+            height: 1;
+            dock: top;
         }
+        Input {
+                       
+            padding: 0 1;
+            border: none !important;
+            height: 1;
+           
+            &>.input--placeholder, &>.input--suggestion {
+                text-style: dim not bold !important;
+                color: ansi_default;
+            }
+            
+            &.-valid {
+                text-style: bold;
+                color: ansi_green;
+            }
+            &.-invalid {
+                text-style: bold;
+                color: ansi_red;
+            }
 
+        }
     }
     """
+
+    def __init__(self, path: str) -> None:
+        super().__init__()
+        self.path = path
 
     path: reactive[str] = reactive("", recompose=True)
 
     def compose(self) -> ComposeResult:
-        yield Input(
-            value=self.path,
-            validators=[DirectoryValidator()],
-            suggester=DirectorySuggester(),
-            classes="-ansi-colors",
-        )
+        with Horizontal():
+            yield Label("📂")
+            yield Input(
+                value=self.path,
+                validators=[DirectoryValidator()],
+                suggester=DirectorySuggester(),
+                classes="-ansi-colors",
+            )
+        yield (footer := Footer(classes="-ansi-colors"))
+        footer.compact = True
+
+    @on(Input.Submitted)
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(event.input.value)
 
     def action_dismiss(self):
-        self.dismiss()
+        self.dismiss(None)
 
 
 class PathNavigator(Vertical):
@@ -225,8 +256,8 @@ class PathNavigator(Vertical):
     """
 
     BINDINGS = [
-        Binding("r", "reload", "Reload"),
-        Binding("g", "goto", "Go to directory"),
+        Binding("r", "reload", "reload"),
+        Binding("g", "goto", "go to directory"),
     ]
 
     path: reactive[Path] = reactive(Path)
@@ -253,12 +284,12 @@ class PathNavigator(Vertical):
     @on(NewPath)
     def on_new_path(self, event: NewPath) -> None:
         event.stop()
+        self.path = event.path
         self.query_one(DirectoryTree).path = event.path
         self.query_one(PathDisplay).path = event.path
 
     def compose(self) -> ComposeResult:
         yield PathDisplay()
-
         tree = DirectoryTree(self.path, classes="-ansi -ansi-scrollbar")
         tree.guide_depth = 3
         tree.show_root = False
@@ -277,8 +308,11 @@ class PathNavigator(Vertical):
             await tree.reload_node(reload_node)
             self.notify(f"👍 Reloaded {str(path)!r}", title="Reload")
 
-    def action_goto(self) -> None:
-        self.app.push_screen(PathScreen())
+    @work
+    async def action_goto(self) -> None:
+        new_path = await self.app.push_screen_wait(PathScreen(str(self.path)))
+        if new_path is not None:
+            self.post_message(PathNavigator.NewPath(Path(new_path)))
 
 
 class ANSIApp(App):
@@ -287,13 +321,14 @@ class ANSIApp(App):
         height: auto;
         max-height: 80vh;
         border: none;
+
     }
    
     """
     INLINE_PADDING = 0
 
     def compose(self) -> ComposeResult:
-        yield PathNavigator(Path("~/projects/textual"))
+        yield PathNavigator(Path("~/"))
         footer = Footer(classes="-ansi-colors")
         footer.compact = True
         yield footer
