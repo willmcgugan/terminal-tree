@@ -374,6 +374,7 @@ class PathNavigator(Horizontal):
         Binding("r", "reload", "reload", tooltip="Refresh tree from filesystem"),
         Binding("g", "goto", "go to", tooltip="Go to a new root path"),
         Binding("p", "toggle_preview", "preview", tooltip="Toggle the preview pane"),
+        Binding("q", "quit", "exit", tooltip="exit from terminal-tree"),
     ]
 
     path: reactive[Path] = reactive(Path)
@@ -447,6 +448,9 @@ class PathNavigator(Horizontal):
     async def action_toggle_preview(self) -> None:
         self.show_preview = not self.show_preview
         self.screen.minimize()
+
+    async def action_quit(self) -> None:
+        exit()
 
 
 class NavigatorApp(App):
