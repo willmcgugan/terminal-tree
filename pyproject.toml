@@ -1,12 +1,12 @@
 [project]
 name = "terminal-tree"
-version = "0.1.0"
+version = "0.1.1"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = [
-    "click>=8.1.7",
-    "textual>=0.79.1",
+dependencies = [    
+    "textual>=0.85.1",
+    "rich>=13.9.4"
 ]
 
 [project.scripts]
