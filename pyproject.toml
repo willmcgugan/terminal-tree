@@ -10,4 +10,4 @@ dependencies = [
 ]
 
 [project.scripts]
-ternminal-tree = "tree:run"
+terminal-tree = "tree:run"
