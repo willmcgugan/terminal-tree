@@ -1,4 +1,3 @@
-# terminal-tree
 
 An experimental filesystem navigator for the terminal.
 
@@ -6,10 +5,18 @@ An experimental filesystem navigator for the terminal.
 
 https://github.com/user-attachments/assets/de4c9bab-4cfa-4295-bd2e-450df855ef0d
 
-
-
 This could form the basis of a file manager / picker.
 For now, consider it a UI experiment.
+
+## Installing
+
+This project isn't on Pypi or other package manager, but thanks to the sorcery that is [uv](https://docs.astral.sh/uv/guides/tools/) you can try it out with the following command:
+
+```
+uvx --from git+https://github.com/willmcgugan/terminal-tree.git terminal-tree
+```
+
+Tested in macOS only at this point. Chances are very high it works on Linux. Slightly lower (but non-zero) that it works on Windows.
 
 ## Tree navigation
 
