@@ -1,6 +1,6 @@
 # /// script
 # dependencies = [
-#   "textual>=0.85.1",
+#   "textual>=0.85.2",
 #   "rich>=13.9.4",
 # ]
 # ///
