@@ -14,7 +14,7 @@ PS Its a [single file](https://github.com/willmcgugan/terminal-tree/blob/main/tr
 This project isn't on Pypi or other package manager, but thanks to the sorcery that is [uv](https://docs.astral.sh/uv/guides/tools/) you can try it out with the following command:
 
 ```
-uvx --from git+https://github.com/willmcgugan/terminal-tree.git terminal-tree
+uvx --from git+https://github.com/willmcgugan/terminal-tree.git --python 3.12 terminal-tree
 ```
 
 Tested in macOS only at this point. Chances are very high it works on Linux. Slightly lower chance (but non-zero) that it works on Windows.
