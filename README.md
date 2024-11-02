@@ -1,12 +1,13 @@
 
-An experimental filesystem navigator for the terminal.
-
+An experimental filesystem navigator for the terminal, built with [Textual](https://github.com/textualize/textual)
 
 
 https://github.com/user-attachments/assets/de4c9bab-4cfa-4295-bd2e-450df855ef0d
 
 This could form the basis of a file manager / picker.
 For now, consider it a UI experiment.
+
+PS Its a [single file](https://github.com/willmcgugan/terminal-tree/blob/main/tree.py).
 
 ## Installing
 
@@ -16,7 +17,7 @@ This project isn't on Pypi or other package manager, but thanks to the sorcery t
 uvx --from git+https://github.com/willmcgugan/terminal-tree.git terminal-tree
 ```
 
-Tested in macOS only at this point. Chances are very high it works on Linux. Slightly lower (but non-zero) that it works on Windows.
+Tested in macOS only at this point. Chances are very high it works on Linux. Slightly lower chance (but non-zero) that it works on Windows.
 
 ## Tree navigation
 
@@ -48,3 +49,9 @@ The path is also validated as you type. Invalid (non directory) paths are highli
 
 
 You can also click on a path component to navigate to a parent directory.
+
+## No issues please
+
+I don't know is this will become a standalone tool, or be folded back in to [Textual](https://github.com/textualize/textual).
+
+If you are interested in this project, please fork it. let me know if you do anything interesting with it!
