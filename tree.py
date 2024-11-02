@@ -1,7 +1,16 @@
+# /// script
+# dependencies = [
+#   "textual>=0.85.1",
+#   "rich>=13.94",
+# ]
+# ///
+
+
 import asyncio
 import itertools
 from dataclasses import dataclass
 from datetime import datetime
+import mimetypes
 from pathlib import Path
 import pwd
 import grp
@@ -10,19 +19,20 @@ import threading
 
 from rich import filesize
 from rich.highlighter import Highlighter
+from rich.syntax import Syntax
 
 from rich.text import Text
 from textual import on, events, work
-from textual.reactive import reactive
+from textual.reactive import reactive, var
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.cache import LRUCache
 from textual.message import Message
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, ScrollableContainer
 from textual.screen import ModalScreen
 from textual.suggester import Suggester
 from textual.validation import ValidationResult, Validator
-from textual.widgets import DirectoryTree, Footer, Label, Tree, Input
+from textual.widgets import DirectoryTree, Footer, Label, Tree, Input, Static
 from textual.widgets.directory_tree import DirEntry
 
 
@@ -38,6 +48,8 @@ class DirectoryHighlighter(Highlighter):
 
 
 class DirectoryValidator(Validator):
+    """Validate a string is a valid directory path."""
+
     def validate(self, value: str) -> ValidationResult:
         path = Path(value).expanduser().resolve()
         if path.is_dir():
@@ -80,11 +92,11 @@ class DirectorySuggester(Suggester):
 
         try:
             path = Path(value)
-            # if path.is_dir():
-            #     return None
             name = path.name
 
-            children = await self._cache.listdir(path.parent.expanduser(), 100)
+            children = await self._cache.listdir(
+                path.expanduser() if path.is_dir() else path.parent.expanduser(), 100
+            )
             possible_paths = [
                 f"{sibling_path}/"
                 for sibling_path in children
@@ -94,6 +106,7 @@ class DirectorySuggester(Suggester):
             if possible_paths:
                 possible_paths.sort(key=str.__len__)
                 suggestion = possible_paths[0]
+
                 if "~" in value:
                     home = str(Path("~").expanduser())
                     suggestion = suggestion.replace(home, "~", 1)
@@ -105,11 +118,11 @@ class DirectorySuggester(Suggester):
 
 
 class PathComponent(Label):
+    """Clickable component in a path."""
+
     DEFAULT_CSS = """
     PathComponent {
-      &:hover {
-        text-style: reverse;
-      }  
+      &:hover { text-style: reverse; }  
     }
     """
 
@@ -120,6 +133,7 @@ class PathComponent(Label):
 class InfoBar(Horizontal):
     DEFAULT_CSS = """
     InfoBar {
+        margin: 0 1;
         height: 1;
         dock: bottom;
         .error { color: ansi_bright_red; }
@@ -131,9 +145,7 @@ class InfoBar(Horizontal):
             text-style: bold;
         }
         .modified-time { color: ansi_cyan; }
-        Label {
-            margin: 0 1 0 0;
-        }
+        Label { margin: 0 1 0 0; }        
     }
     """
 
@@ -180,7 +192,7 @@ class PathDisplay(Horizontal):
         align: center top;
         text-style: bold;
         color: ansi_green;
-        .separator { margin: 0 0; }
+        .separator { margin: 0 0; }      
     }
     """
 
@@ -207,14 +219,15 @@ class PathDisplay(Horizontal):
 class PathScreen(ModalScreen[str | None]):
     BINDINGS = [("escape", "dismiss", "cancel")]
 
-    DEFAULT_CSS = """
+    CSS = """
     PathScreen {
         align: center top;        
         Horizontal {
+            margin-left: 1;               
             height: 1;
             dock: top;
         }
-        Input {                       
+        Input {                    
             padding: 0 1;
             border: none !important;
             height: 1;           
@@ -230,15 +243,13 @@ class PathScreen(ModalScreen[str | None]):
                 text-style: bold;
                 color: ansi_red;
             }
-        }
+        }       
     }
     """
 
     def __init__(self, path: str) -> None:
         super().__init__()
         self.path = path.rstrip("/") + "/"
-
-    path: reactive[str] = reactive("", recompose=True)
 
     def compose(self) -> ComposeResult:
         with Horizontal():
@@ -260,25 +271,113 @@ class PathScreen(ModalScreen[str | None]):
         self.dismiss(None)
 
 
-class PathNavigator(Vertical):
+class PreviewWindow(ScrollableContainer):
+    """Widget to show a preview of a file."""
+
+    ALLOW_MAXIMIZE = True
+    DEFAULT_CSS = """
+    PreviewWindow {
+        width: 1fr;
+        height: 1fr;
+        border: heavy blank;
+        overflow-y: scroll;
+        &:focus { border: heavy ansi_blue; }
+        #content { width: auto; }
+        &.-preview-unavailable {
+            overflow: auto;
+            hatch: right ansi_black;
+            align: center middle;
+            text-style: bold;
+            color: ansi_red;
+        }   
+    }
+    """
+    DEFAULT_CLASSES = "-ansi-scrollbar"
+
+    path: var[Path] = var(Path)
+
+    @work(exclusive=True)
+    async def get_syntax(self, path: Path) -> None:
+        content = self.query_one("#content", Static)
+        if path.is_file():
+            file_type, encoding = mimetypes.guess_type(str(path))
+            if file_type and file_type.startswith("text/"):
+                # A text file, we can attempt to syntax highlight it
+                with open(path, "rt", encoding=encoding) as text_file:
+                    lines = text_file.readlines(1024 * 64)
+                code = "".join(lines)
+
+                lexer = Syntax.guess_lexer(str(path), code)
+                try:
+                    syntax = Syntax(
+                        code,
+                        lexer,
+                        word_wrap=False,
+                        indent_guides=True,
+                        line_numbers=True,
+                        theme="ansi_light",
+                    )
+                except Exception:
+                    return
+                self.call_later(content.update, syntax)
+                self.remove_class("-preview-unavailable")
+            else:
+                # Try to display it is plain text
+                with open(path, "rb") as binary_file:
+                    data = binary_file.read(1024 * 64)
+                try:
+                    text = data.decode(encoding or "utf-8")
+                except Exception:
+                    # Can't be decoded as text
+                    self.call_later(content.update, "Preview not available")
+                    self.add_class("-preview-unavailable")
+                else:
+                    syntax = Syntax(
+                        text,
+                        lexer="text",
+                        word_wrap=False,
+                        indent_guides=True,
+                        line_numbers=True,
+                        theme="ansi_light",
+                    )
+                    self.call_later(content.update, syntax)
+                    self.remove_class("-preview-unavailable")
+
+    def watch_path(self, path: Path) -> None:
+        self.get_syntax(path)
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="content")
+
+
+class PathNavigator(Horizontal):
     DEFAULT_CSS = """
     PathNavigator {
         height: auto;
         max-height: 100%;
         DirectoryTree {            
             height: auto;    
-            max-height: 100%;        
+            max-height: 100%;
+            width: 1fr;
+            border: heavy blank;
+            &:focus { border: heavy ansi_blue; }   
+        }
+        PreviewWindow { display: None; }    
+        &.-show-preview {        
+            PreviewWindow { display: block; }
         }
     }
 
     """
 
     BINDINGS = [
-        Binding("r", "reload", "reload"),
-        Binding("g", "goto", "go to directory"),
+        Binding("r", "reload", "reload", tooltip="Refresh tree from filesystem"),
+        Binding("g", "goto", "go to", tooltip="Go to a new root path"),
+        Binding("p", "toggle_preview", "preview", tooltip="Toggle the preview pane"),
     ]
 
     path: reactive[Path] = reactive(Path)
+    show_preview: reactive[bool] = reactive(False)
 
     @dataclass
     class NewPath(Message):
@@ -294,10 +393,14 @@ class PathNavigator(Vertical):
     def on_mount(self) -> None:
         self.post_message(PathNavigator.NewPath(self.path))
 
+    def watch_show_preview(self, show_preview: bool) -> None:
+        self.set_class(show_preview, "-show-preview")
+
     @on(Tree.NodeHighlighted)
     def on_node_highlighted(self, event: Tree.NodeHighlighted[DirEntry]) -> None:
         if event.node.data is not None:
             self.query_one(InfoBar).path = event.node.data.path
+            self.query_one(PreviewWindow).path = event.node.data.path
 
     @on(NewPath)
     def on_new_path(self, event: NewPath) -> None:
@@ -320,6 +423,7 @@ class PathNavigator(Vertical):
         tree.show_root = False
         tree.center_scroll = True
         yield tree
+        yield PreviewWindow()
         yield InfoBar()
 
     async def action_reload(self) -> None:
@@ -340,16 +444,26 @@ class PathNavigator(Vertical):
         if new_path is not None:
             self.post_message(PathNavigator.NewPath(Path(new_path)))
 
+    async def action_toggle_preview(self) -> None:
+        self.show_preview = not self.show_preview
+        self.screen.minimize()
 
-class ANSIApp(App):
+
+class NavigatorApp(App):
     CSS = """
     Screen {
         height: auto;
         max-height: 80vh;
         border: none;
+        Footer { margin: 0 1 !important; }
+        &.-maximized-view {
+            height: 100vh;  
+            hatch: right ansi_black;          
+        }
+        .-maximized { margin: 1 2; }
     }
-   
     """
+    ALLOW_IN_MAXIMIZED_VIEW = ""
     INLINE_PADDING = 0
 
     def compose(self) -> ComposeResult:
@@ -363,6 +477,10 @@ class ANSIApp(App):
         tree.cursor_line = 0
 
 
-if __name__ == "__main__":
-    app = ANSIApp(ansi_color=True)
+def run():
+    app = NavigatorApp(ansi_color=True)
     app.run(inline=True)
+
+
+if __name__ == "__main__":
+    run()
