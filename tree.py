@@ -7,10 +7,14 @@
 
 
 import asyncio
-import grp
+import os
+try:
+    import grp
+except ImportError as e:
+    grp = None
+    print(e)
 import itertools
 import mimetypes
-import pwd
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,7 +25,7 @@ from rich import filesize
 from rich.highlighter import Highlighter
 from rich.syntax import Syntax
 from rich.text import Text
-from textual import events, on, work
+from textual import events, on, work, log
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.cache import LRUCache
@@ -202,8 +206,11 @@ class InfoBar(Horizontal):
         except Exception:
             yield Label("failed to get file info", classes="error")
         else:
-            user_name = pwd.getpwuid(stat.st_uid).pw_name
-            group_name = grp.getgrgid(stat.st_gid).gr_name
+            user_name = os.getlogin()
+            if grp:
+                group_name = grp.getgrgid(stat.st_gid).gr_name
+            else:
+                group_name = "unknown"
             modified_time = datetime.fromtimestamp(stat.st_mtime)
 
             yield Label(filemode(stat.st_mode), classes="mode")
