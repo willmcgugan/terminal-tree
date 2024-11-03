@@ -32,12 +32,20 @@ from textual.containers import Horizontal, ScrollableContainer
 from textual.screen import ModalScreen
 from textual.suggester import Suggester
 from textual.validation import ValidationResult, Validator
+from textual.worker import get_current_worker
 from textual.widgets import DirectoryTree, Footer, Label, Tree, Input, Static
 from textual.widgets.directory_tree import DirEntry
 
 
 class DirectoryHighlighter(Highlighter):
-    """Highlights directories in green, anything else in red."""
+    """Highlights directories in green, anything else in red.
+
+    This is a [Rich highlighter](https://rich.readthedocs.io/en/latest/highlighting.html),
+    which can stylize Text based on dynamic criteria.
+
+    Here we are highlighting valid directory paths in green, and invalid directory paths in red.
+
+    """
 
     def highlight(self, text: Text) -> None:
         path = Path(text.plain).expanduser().resolve()
@@ -48,7 +56,12 @@ class DirectoryHighlighter(Highlighter):
 
 
 class DirectoryValidator(Validator):
-    """Validate a string is a valid directory path."""
+    """Validate a string is a valid directory path.
+
+    This is a Textual [Validator](https://textual.textualize.io/widgets/input/#validating-input) used by
+    the input widget.
+
+    """
 
     def validate(self, value: str) -> ValidationResult:
         path = Path(value).expanduser().resolve()
@@ -59,7 +72,13 @@ class DirectoryValidator(Validator):
 
 
 class ListDirCache:
-    """A cache for listing a directory."""
+    """A cache for listing a directory (not a Rich / Textual object).
+
+    This class is responsible for listing directories, and caching the results.
+
+    Listing a directory is a blocking operation, which is why we defer the work to a thread.
+
+    """
 
     def __init__(self) -> None:
         self._cache: LRUCache[tuple[str, int], list[Path]] = LRUCache(100)
@@ -69,6 +88,11 @@ class ListDirCache:
         cache_key = (str(path), size)
 
         def iterdir_thread(path: Path) -> list[Path]:
+            """Run iterdir in a thread.
+
+            Returns:
+                A list of paths.
+            """
             return list(itertools.islice(path.iterdir(), size))
 
         with self._lock:
@@ -81,7 +105,12 @@ class ListDirCache:
 
 
 class DirectorySuggester(Suggester):
-    """Suggest a directory."""
+    """Suggest a directory.
+
+    This is a [Suggester](https://textual.textualize.io/api/suggester/#textual.suggester.Suggester) instance,
+    used by the Input widget to suggest auto-completions.
+
+    """
 
     def __init__(self) -> None:
         self._cache = ListDirCache()
@@ -118,7 +147,12 @@ class DirectorySuggester(Suggester):
 
 
 class PathComponent(Label):
-    """Clickable component in a path."""
+    """Clickable component in a path.
+
+    A simple widget that displays text with a hover effect, that sends
+    a message when clicked.
+
+    """
 
     DEFAULT_CSS = """
     PathComponent {
@@ -131,6 +165,8 @@ class PathComponent(Label):
 
 
 class InfoBar(Horizontal):
+    """A widget to display information regarding a file, such as user / size / modification date."""
+
     DEFAULT_CSS = """
     InfoBar {
         margin: 0 1;
@@ -184,6 +220,12 @@ class InfoBar(Horizontal):
 
 
 class PathDisplay(Horizontal):
+    """A widget to display the path at the top of the UI.
+
+    Not just simple text, this consists of clickable path components.
+
+    """
+
     DEFAULT_CSS = """
     PathDisplay {
         layout: horizontal;
@@ -197,7 +239,6 @@ class PathDisplay(Horizontal):
     """
 
     path: reactive[Path] = reactive(Path, recompose=True)
-    edit = reactive(False, recompose=True)
 
     def compose(self) -> ComposeResult:
         path = self.path.resolve().absolute()
@@ -217,6 +258,15 @@ class PathDisplay(Horizontal):
 
 
 class PathScreen(ModalScreen[str | None]):
+    """A [Modal screen](https://textual.textualize.io/guide/screens/#modal-screens) containing an editable path.
+
+    This is displayed when the user summons the "goto" functionality.
+
+    As a modal screen, it is displayed on top of the previous screen, but only the widgets
+    her will be usable.
+
+    """
+
     BINDINGS = [("escape", "dismiss", "cancel")]
 
     CSS = """
@@ -254,6 +304,7 @@ class PathScreen(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Horizontal():
             yield Label("📂")
+            # The validator and suggester instances pack a lot of functionality in to this input.
             yield Input(
                 value=self.path,
                 validators=[DirectoryValidator()],
@@ -265,14 +316,21 @@ class PathScreen(ModalScreen[str | None]):
 
     @on(Input.Submitted)
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        """If the user submits the input (with enter), we return the value of the input to the caller."""
         self.dismiss(event.input.value)
 
     def action_dismiss(self):
+        """If the user dismisses the screen with the escape key, we return None to the caller."""
         self.dismiss(None)
 
 
 class PreviewWindow(ScrollableContainer):
-    """Widget to show a preview of a file."""
+    """Widget to show a preview of a file.
+
+    A scrollable container that contains a [Rich Syntax](https://rich.readthedocs.io/en/latest/syntax.html) object
+    which highlights and formats text.
+
+    """
 
     ALLOW_MAXIMIZE = True
     DEFAULT_CSS = """
@@ -297,60 +355,66 @@ class PreviewWindow(ScrollableContainer):
     path: var[Path] = var(Path)
 
     @work(exclusive=True)
-    async def get_syntax(self, path: Path) -> None:
+    async def update_syntax(self, path: Path) -> None:
+        """Update the preview in a worker.
+
+        A worker runs the code in a concurrent asyncio Task.
+
+        Args:
+            path: A Path to the file to get the content for.
+        """
+        worker = get_current_worker()
         content = self.query_one("#content", Static)
         if path.is_file():
-            file_type, encoding = mimetypes.guess_type(str(path))
-            if file_type and file_type.startswith("text/"):
-                # A text file, we can attempt to syntax highlight it
-                with open(path, "rt", encoding=encoding) as text_file:
-                    lines = text_file.readlines(1024 * 64)
-                code = "".join(lines)
+            _file_type, encoding = mimetypes.guess_type(str(path))
 
-                lexer = Syntax.guess_lexer(str(path), code)
+            # A text file, we can attempt to syntax highlight it
+            def read_lines() -> list[str] | None:
+                """A function to read lines from path in a thread."""
                 try:
-                    syntax = Syntax(
-                        code,
-                        lexer,
-                        word_wrap=False,
-                        indent_guides=True,
-                        line_numbers=True,
-                        theme="ansi_light",
-                    )
+                    with open(path, "rt", encoding=encoding or "utf-8") as text_file:
+                        return text_file.readlines(1024 * 32)
                 except Exception:
-                    return
-                self.call_later(content.update, syntax)
-                self.remove_class("-preview-unavailable")
-            else:
-                # Try to display it is plain text
-                with open(path, "rb") as binary_file:
-                    data = binary_file.read(1024 * 64)
-                try:
-                    text = data.decode(encoding or "utf-8")
-                except Exception:
-                    # Can't be decoded as text
-                    self.call_later(content.update, "Preview not available")
-                    self.add_class("-preview-unavailable")
-                else:
-                    syntax = Syntax(
-                        text,
-                        lexer="text",
-                        word_wrap=False,
-                        indent_guides=True,
-                        line_numbers=True,
-                        theme="ansi_light",
-                    )
-                    self.call_later(content.update, syntax)
-                    self.remove_class("-preview-unavailable")
+                    # We could be more precise with error handling here, but for now
+                    # we will treat all errors as fails.
+                    return None
+
+            # Read the lines in a thread so as not to pause the UI
+            lines = await asyncio.to_thread(read_lines)
+            if lines is None:
+                self.call_later(content.update, "Preview not available")
+                self.add_class("-preview-unavailable")
+                return
+
+            if worker.is_cancelled:
+                return
+
+            code = "".join(lines)
+            lexer = Syntax.guess_lexer(str(path), code)
+            try:
+                syntax = Syntax(
+                    code,
+                    lexer,
+                    word_wrap=False,
+                    indent_guides=True,
+                    line_numbers=True,
+                    theme="ansi_light",
+                )
+            except Exception:
+                return
+            content.update(syntax)
+            self.remove_class("-preview-unavailable")
 
     def watch_path(self, path: Path) -> None:
-        self.get_syntax(path)
+        self.update_syntax(path)
 
     def compose(self) -> ComposeResult:
         yield Static("", id="content")
 
 
 class PathNavigator(Horizontal):
+    """The top-level widget, containing the directory tree and preview window."""
+
     DEFAULT_CSS = """
     PathNavigator {
         height: auto;
@@ -381,6 +445,8 @@ class PathNavigator(Horizontal):
 
     @dataclass
     class NewPath(Message):
+        """Message sent when the path is updated."""
+
         path: Path
 
     def __init__(self, path: Path) -> None:
@@ -388,6 +454,7 @@ class PathNavigator(Horizontal):
         self.path = path
 
     def validate_path(self, path: Path) -> Path:
+        """Called to validate the path reactive."""
         return path.expanduser().resolve()
 
     def on_mount(self) -> None:
@@ -440,6 +507,13 @@ class PathNavigator(Horizontal):
 
     @work
     async def action_goto(self) -> None:
+        """Action to goto a new path.
+
+        This is a worker, because we want to wait on another screen without pausing the event loop.
+
+        Without the "@work" decorator, the UI would be frozen.
+
+        """
         new_path = await self.app.push_screen_wait(PathScreen(str(self.path)))
         if new_path is not None:
             self.post_message(PathNavigator.NewPath(Path(new_path)))
@@ -450,6 +524,13 @@ class PathNavigator(Horizontal):
 
 
 class NavigatorApp(App):
+    """The App class.
+
+    Most app's (like this one) don't contain a great deal of functionality.
+    They exist to provide CSS, and to create the initial UI.
+
+    """
+
     CSS = """
     Screen {
         height: auto;
@@ -473,12 +554,15 @@ class NavigatorApp(App):
         yield footer
 
     def on_mount(self) -> None:
-        tree = self.query_one(DirectoryTree)
-        tree.cursor_line = 0
+        """Highlight the first line of the directory tree on startup."""
+        self.query_one(DirectoryTree).cursor_line = 0
 
 
 def run():
+    """A function to run the app."""
+    # We want ANSI color rather than truecolor.
     app = NavigatorApp(ansi_color=True)
+    # Running inline will display the app below the prompt, rather than go fullscreen.
     app.run(inline=True)
 
 
