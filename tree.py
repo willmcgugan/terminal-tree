@@ -7,34 +7,33 @@
 
 
 import asyncio
+import grp
 import itertools
+import mimetypes
+import pwd
+import threading
 from dataclasses import dataclass
 from datetime import datetime
-import mimetypes
 from pathlib import Path
-import pwd
-import grp
 from stat import filemode
-import threading
 
 from rich import filesize
 from rich.highlighter import Highlighter
 from rich.syntax import Syntax
-
 from rich.text import Text
-from textual import on, events, work
-from textual.reactive import reactive, var
+from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.cache import LRUCache
-from textual.message import Message
 from textual.containers import Horizontal, ScrollableContainer
+from textual.message import Message
+from textual.reactive import reactive, var
 from textual.screen import ModalScreen
 from textual.suggester import Suggester
 from textual.validation import ValidationResult, Validator
-from textual.worker import get_current_worker
-from textual.widgets import DirectoryTree, Footer, Label, Tree, Input, Static
+from textual.widgets import DirectoryTree, Footer, Input, Label, Static, Tree
 from textual.widgets.directory_tree import DirEntry
+from textual.worker import get_current_worker
 
 
 class DirectoryHighlighter(Highlighter):
