@@ -7,11 +7,12 @@
 
 
 import asyncio
-import os
 try:
     import grp
+    import pwd
 except ImportError as e:
     grp = None
+    pwd = None
     print(e)
 import itertools
 import mimetypes
@@ -206,11 +207,14 @@ class InfoBar(Horizontal):
         except Exception:
             yield Label("failed to get file info", classes="error")
         else:
-            user_name = os.getlogin()
+            if pwd:
+                user_name = pwd.getpwuid(stat.st_uid).pw_name
+            else:
+                user_name = ""
             if grp:
                 group_name = grp.getgrgid(stat.st_gid).gr_name
             else:
-                group_name = "unknown"
+                group_name = ""
             modified_time = datetime.fromtimestamp(stat.st_mtime)
 
             yield Label(filemode(stat.st_mode), classes="mode")
