@@ -25,7 +25,7 @@ from rich import filesize
 from rich.highlighter import Highlighter
 from rich.syntax import Syntax
 from rich.text import Text
-from textual import events, on, work, log
+from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.cache import LRUCache
