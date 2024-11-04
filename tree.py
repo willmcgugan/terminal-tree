@@ -1,9 +1,20 @@
+# /// script
+# dependencies = [
+#   "textual>=0.85.2",
+#   "rich>=13.9.4",
+# ]
+# ///
+
+
 import asyncio
 import itertools
 from dataclasses import dataclass
 from datetime import datetime
 import mimetypes
 from pathlib import Path
+import pwd
+import grp
+from stat import filemode
 import threading
 
 from rich import filesize
@@ -87,7 +98,7 @@ class DirectorySuggester(Suggester):
                 path.expanduser() if path.is_dir() else path.parent.expanduser(), 100
             )
             possible_paths = [
-                f"{sibling_path}\\"
+                f"{sibling_path}/"
                 for sibling_path in children
                 if sibling_path.name.lower().startswith(name.lower())
                 and sibling_path.is_dir()
@@ -128,6 +139,7 @@ class InfoBar(Horizontal):
         .error { color: ansi_bright_red; }
         .mode { color: ansi_red; }
         .user-name { color: ansi_green; }
+        .group-name { color: ansi_yellow; }
         .file-size {
             color: ansi_magenta;
             text-style: bold;
@@ -155,13 +167,13 @@ class InfoBar(Horizontal):
         except Exception:
             yield Label("failed to get file info", classes="error")
         else:
-            user_name = stat.st_uid  # Simplified for Windows
-            group_name = stat.st_gid  # Simplified for Windows
+            user_name = pwd.getpwuid(stat.st_uid).pw_name
+            group_name = grp.getgrgid(stat.st_gid).gr_name
             modified_time = datetime.fromtimestamp(stat.st_mtime)
 
-            yield Label("D" if self.path.is_dir() else "-", classes="mode")
-            yield Label(str(user_name), classes="user-name")
-            yield Label(str(group_name), classes="group-name")
+            yield Label(filemode(stat.st_mode), classes="mode")
+            yield Label(user_name, classes="user-name")
+            yield Label(group_name, classes="group-name")
             yield Label(
                 self.datetime_to_ls_format(modified_time), classes="modified-time"
             )
@@ -191,17 +203,17 @@ class PathDisplay(Horizontal):
         path = self.path.resolve().absolute()
 
         yield Label("📁 ", classes="separator")
-        components = str(path).split("\\")  # Use "\\" for Windows paths
-        root_component = PathComponent("\\", name="\\")
-        root_component.tooltip = "\\"
+        components = str(path).split("/")
+        root_component = PathComponent("/", name="/")
+        root_component.tooltip = "/"
         yield root_component
-        for index, component in enumerate(components[1:], 1):  # Start from 1 to skip root
-            partial_path = "\\".join(components[:index + 1])
+        for index, component in enumerate(components, 1):
+            partial_path = "/".join(components[:index])
             component_label = PathComponent(component, name=partial_path)
             component_label.tooltip = partial_path
             yield component_label
-            if index < len(components) - 1:
-                yield Label("\\", classes="separator")
+            if index > 1 and index < len(components):
+                yield Label("/", classes="separator")
 
 
 class PathScreen(ModalScreen[str | None]):
@@ -237,7 +249,7 @@ class PathScreen(ModalScreen[str | None]):
 
     def __init__(self, path: str) -> None:
         super().__init__()
-        self.path = path.rstrip("\\") + "\\"
+        self.path = path.rstrip("/") + "/"
 
     def compose(self) -> ComposeResult:
         with Horizontal():
@@ -310,7 +322,7 @@ class PreviewWindow(ScrollableContainer):
                 self.call_later(content.update, syntax)
                 self.remove_class("-preview-unavailable")
             else:
-                # Try to display it as plain text
+                # Try to display it is plain text
                 with open(path, "rb") as binary_file:
                     data = binary_file.read(1024 * 64)
                 try:
@@ -355,6 +367,7 @@ class PathNavigator(Horizontal):
             PreviewWindow { display: block; }
         }
     }
+
     """
 
     BINDINGS = [
