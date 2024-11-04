@@ -55,3 +55,7 @@ You can also click on a path component to navigate to a parent directory.
 I don't know is this will become a standalone tool, or be folded back in to [Textual](https://github.com/textualize/textual).
 
 If you are interested in this project, please fork it. let me know if you do anything interesting with it!
+
+
+# Windows Port
+A windows version of this code can be found in the `windows` folder
